@@ -1,6 +1,5 @@
-name: simple-dev-apk-build
+name: app-build-action-dev
 
-# 触发条件：Push 到 'dev' 或手动触发
 on:
   workflow_dispatch:
   push:
@@ -8,60 +7,119 @@ on:
       - 'dev'
 
 jobs:
-  # 专门用于构建 Android DEV APK 的 Job
-  build-dev-apk:
-    # 切换到更经济和高效的 Linux 运行器
-    runs-on: ubuntu-latest 
+  # 打包Android、iOS、Mac
+  build-mac-ios-android:
+    runs-on: macos-latest
 
     permissions:
       contents: write
-      
+
     steps:
-      # 1. 检出代码
+      # 签出代码
       - uses: actions/checkout@v4
         with:
           ref: dev
-          fetch-depth: 0 # 确保完整获取历史，提高检出成功率
 
-      # 2. 设置环境：JAVA & Flutter
+      # APK签名设置
+      - name: Download Android keystore
+        id: android_keystore
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: keystore.jks
+          encodedString: ${{ secrets.KEYSTORE_BASE64 }}
+      - name: Create key.properties
+        run: |
+          echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > simple_live_app/android/key.properties
+          echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> simple_live_app/android/key.properties
+
+      # 设置JAVA环境
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: "17"
           cache: "gradle"
 
-      - uses: subosito/flutter-action@v2
+      # 设置Flutter
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.x'
-          cache: true
+          cache: true 
 
-      # 3. 获取依赖 (Packages)
-      - name: Restore packages (flutter pub get)
-        run: cd simple_live_app && flutter pub get
+      # 打开MAC Desktop支持
+      - name: Enable Flutter Desktop
+        run: flutter config --enable-macos-desktop
 
-      # 4. 核心兼容性修复和清理 (AAPT2 Fix)
-      # 强制使用稳定的 Android SDK 34 并清理 Gradle 缓存，解决资源链接错误。
-      - name: Fix SDK and Clean Gradle
+      # 更新Flutter的packages
+      - name: Restore packages
         run: |
-          BUILD_GRADLE_PATH="simple_live_app/android/app/build.gradle"
-          # 强制替换 compileSdkVersion 和 targetSdkVersion 为 34
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' $BUILD_GRADLE_PATH
-          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' $BUILD_GRADLE_PATH
-          # 清理 Gradle 缓存
-          cd simple_live_app/android
-          ./gradlew clean
+          cd simple_live_app
+          flutter pub get
 
-      # 5. 构建移动端 DEV APK (Debug Build)
-      - name: Build DEV APK
-        run: cd simple_live_app && flutter build apk --debug --split-per-abi
+      # 安装appdmg npm install -g appdmg
+      - name: Install appdmg
+        run: npm install -g appdmg
 
-      # 6. 上传产物 (Artifacts)
-      - name: Upload DEV APK to Artifacts
+      # 设置flutter_distributor环境
+      - name: Install flutter_distributor
+        run: dart pub global activate flutter_distributor
+
+      # 打包APK
+      - name: Build APK
+        run: |
+          cd simple_live_app
+          flutter build apk --release --split-per-abi
+
+      #上传Artifacts
+      - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk-debug-dev
-          # 上传所有 Debug APK 文件
-          path: simple_live_app/build/app/outputs/flutter-apk/*.apk
-          
-      # 完成提示
-      - run: echo "✅ Mobile DEV APK build job completed successfully."
+          name: android
+          path: |
+            simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
+
+   
+  # 打包Windows
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      # 签出代码
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      # 设置Flutter环境
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.22.x"
+          cache: true
+      - name: Enable Flutter Desktop
+        run: flutter config --enable-windows-desktop
+      - name: Restore Packages
+        run: |
+          cd simple_live_app
+          flutter pub get
+      # 设置flutter_distributor环境
+      - name: Install flutter_distributor
+        run: dart pub global activate flutter_distributor
+      # build Windows ZIP\MSIX
+      - name: Build Windows
+        run: |
+          cd simple_live_app
+          flutter_distributor package --platform windows --targets msix,zip --skip-clean
+      # 上传Windows至Artifacts
+      - name: Upload Windows APP to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            simple_live_app/build/dist/*/*.msix
+            simple_live_app/build/dist/*/*.zip
+        #完成
+      - run: echo "🍏 Windows job's status is ${{ job.status }}."
