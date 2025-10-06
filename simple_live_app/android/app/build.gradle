@@ -37,7 +37,7 @@ android {
     
     // 保留 ndkVersion，因为它通常与 compileSdk 独立或由 Flutter 管理，
     // 如果它导致问题再行硬编码。
-    ndkVersion = flutter.ndkVersion 
+  //  ndkVersion = flutter.ndkVersion 
     
     // 【修改点 3: 移除重复的旧式定义】
     // compileSdkVersion 34 // <-- 移除此行，使用 compileSdk 34
